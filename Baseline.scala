@@ -18,7 +18,196 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
   val json = opt[String]()
   verify()
 }
-class Data(xs: Array[Rating]){
+
+class Train_Data(xs: Array[Rating]){
+  val number_users = {
+      var max = 0
+      for (i <- xs){
+        if( i.user > max){
+          max = i.user
+        }
+      }
+      max + 1
+  }
+  
+  val number_items = { 
+      var max = 0
+      for (i <- xs){
+        if( i.item > max){
+          max = i.item
+        }
+      }
+      max + 1
+  }
+  
+  var user_count:Array[Double] = new Array[Double](number_users)
+  var sum_rating:Array[Double] = new Array[Double](number_users)
+  var rating_array = Array.ofDim[Double](number_users, number_items)
+  var norm_rating = Array.ofDim[Double](number_users, number_items)
+  var number_user = new Array[Double](number_items)
+  var number_item = new Array[Double](number_users)
+  var total_sum = 0.0
+  var total_num = 0.0
+  var user_set = Set(-1)
+  var item_set = Set(-1)
+
+  def data_preparation(){
+    for(trainele <- xs) {
+      sum_rating(trainele.user) += trainele.rating
+      user_count(trainele.user) += 1.0
+      number_user(trainele.item) += 1.0
+      number_item(trainele.user) += 1.0
+      rating_array(trainele.user)(trainele.item) = trainele.rating
+      total_sum += trainele.rating
+      total_num += 1.0
+      user_set += trainele.user
+      item_set += trainele.item
+    }
+  }
+
+  def mean_rating_user(u: Int): Double = { 
+      if(user_count(u) == 0){
+        0
+      }else{
+        sum_rating(u) / user_count(u)
+      }
+  }
+
+  def mean_rating_item(i: Int): Double = { 
+    var sum_item = 0.0
+    for( u <- 1 to (number_users - 1)){
+      sum_item += rating_array(u)(i)
+    }
+    if (number_user(i) == 0.0){
+      0
+    }
+    else {
+      sum_item / number_user(i)
+    }
+    
+  }
+
+  def scale(x: Double, u: Double):Double = {
+	if (x > u){
+      5.0 - u
+    } else if (x < u){
+      u - 1.0
+    }else {
+	    1.0
+    }
+  }
+
+  def normalized_deviaton(u: Int, i:Int): Double = {
+    var avg_rating =  mean_rating_user(u)
+	  var rating_u_i = rating_array(u)(i)
+    if( rating_u_i == 0){
+       0
+    }else{
+	    var norm = (rating_u_i - avg_rating) / scale(rating_u_i, avg_rating)
+      norm
+    }
+  }
+
+  def global_average_deviation(i:Int):Double = {
+	  var sum = 0.0
+	  for (u <- 1 to (number_users - 1)){
+		  sum = sum + normalized_deviaton(u,i)
+	  }
+	  sum / number_user(i)
+  }
+
+  def global_average_rating(): Double = {
+      total_sum / total_num 
+  }
+
+  def predict_rating_user_item(u:Int, i:Int):Double = {
+    var mean_rating_user_ = mean_rating_user(u)
+    var global_average_deviation_ = global_average_deviation(i)
+    mean_rating_user_ + global_average_deviation_ * scale((mean_rating_user_ + global_average_deviation_), mean_rating_user_)
+  }
+
+  // def predict_rating_user(u:Int, i:Int):Double = {
+  //   var mean_rating_user_ = mean_rating_user(u)
+  //   var global_average_deviation_ = global_average_deviation(i)
+  //   mean_rating_user_ + global_average_deviation_ * scale((mean_rating_user_ + global_average_deviation_), mean_rating_user_)
+  // }
+
+  def predict_rating_global(u:Int, i:Int):Double = {
+    var mean_rating_global_ = global_average_rating()
+    var global_average_deviation_ = global_average_deviation(i)
+    mean_rating_global_ + global_average_deviation_ * scale((mean_rating_global_ + global_average_deviation_), mean_rating_global_)
+  }
+
+   def averageItemPredictor(i:Int, u:Int):Double = {
+    if(!(item_set contains  i) && !(user_set contains u)){
+      global_average_rating
+    }
+    else if (!(item_set contains  i) && (user_set contains u)){
+      mean_rating_user(u)
+    }
+    else{
+      mean_rating_item(i)
+    }
+     
+   }
+
+  def predict_rating_user_item_test(u:Int, i:Int): Double = {
+    var mean_rating_user_ = mean_rating_user(u)
+    var global_average_deviation_ = global_average_deviation(i)
+    var return_value = 0.0
+    if (global_average_deviation_ == 0.0 || number_user(i) == 0.0){
+      return_value = mean_rating_user_
+    }
+    else if (number_item(u) == 0.0){
+      return_value = global_average_rating()
+    }else{
+      return_value = mean_rating_user_ + global_average_deviation_ * scale((mean_rating_user_ + global_average_deviation_), mean_rating_user_) 
+    }
+    return_value
+  }
+
+  def mean_absolute_error():Double = {
+    var abosute_error = 0.0
+    var predicted_rating_user_item = 0.0
+    for(trainele <- xs) {
+      predicted_rating_user_item = predict_rating_user_item_test(trainele.user, trainele.item)
+      abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
+    }
+    abosute_error / total_num
+  }
+
+  def mean_absolute_error_item():Double = {
+    var abosute_error = 0.0
+    var predicted_rating_user_item = 0.0
+    for(trainele <- xs) {
+      predicted_rating_user_item = mean_rating_item(trainele.item)
+      abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
+    }
+    abosute_error / total_num
+  }
+  
+  def mean_absolute_error_user():Double = {
+    var abosute_error = 0.0
+    var predicted_rating_user_item = 0.0
+    for(trainele <- xs) {
+      predicted_rating_user_item = mean_rating_user(trainele.user)
+      abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
+    }
+    abosute_error / total_num
+  }
+
+  def mean_absolute_error_global():Double = {
+    var abosute_error = 0.0
+    var predicted_rating_user_item = 0.0
+    for(trainele <- xs) {
+      predicted_rating_user_item = global_average_rating()
+      abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
+    }
+    abosute_error / total_num
+  }
+}
+
+class Test_Data(xs: Array[Rating]){
   val number_users = {
       var max = 0
       for (i <- xs){
@@ -125,7 +314,7 @@ class Data(xs: Array[Rating]){
     mean_rating_global_ + global_average_deviation_ * scale((mean_rating_global_ + global_average_deviation_), mean_rating_global_)
   }
 
-  def predict_rating_item(u:Int, i:Int):Double = {
+  def predict_rating_item(i:Int):Double = {
     var mean_rating_item_ = mean_rating_item(i)
     var global_average_deviation_ = global_average_deviation(i)
     mean_rating_item_ + global_average_deviation_ * scale((mean_rating_item_ + global_average_deviation_), mean_rating_item_)
@@ -146,41 +335,41 @@ class Data(xs: Array[Rating]){
     return_value
   }
 
-  def mean_absolute_error():Double = {
+  def mean_absolute_error(train: Train_Data):Double = {
     var abosute_error = 0.0
     var predicted_rating_user_item = 0.0
     for(trainele <- xs) {
-      predicted_rating_user_item = predict_rating_user_item_test(trainele.user, trainele.item)
+      predicted_rating_user_item = train.predict_rating_user_item_test(trainele.user, trainele.item)
       abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
     }
     abosute_error / total_num
   }
 
-  def mean_absolute_error_item():Double = {
+  def mean_absolute_error_item(train: Train_Data):Double = {
     var abosute_error = 0.0
     var predicted_rating_user_item = 0.0
+    var den = 0.0
     for(trainele <- xs) {
-      predicted_rating_user_item = mean_rating_item(trainele.item)
+      predicted_rating_user_item = train.averageItemPredictor(trainele.item, trainele.user)
       abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
     }
     abosute_error / total_num
   }
   
-  def mean_absolute_error_user():Double = {
+  def mean_absolute_error_user(train: Train_Data):Double = {
     var abosute_error = 0.0
     var predicted_rating_user_item = 0.0
     for(trainele <- xs) {
-      predicted_rating_user_item = mean_rating_user(trainele.user)
+      predicted_rating_user_item = train.mean_rating_user(trainele.user)
       abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
     }
     abosute_error / total_num
   }
 
-  def mean_absolute_error_global():Double = {
+  def mean_absolute_error_global(train: Train_Data):Double = {
     var abosute_error = 0.0
-    var predicted_rating_user_item = 0.0
+    val predicted_rating_user_item = train.global_average_rating()
     for(trainele <- xs) {
-      predicted_rating_user_item = global_average_rating()
       abosute_error = abosute_error + (predicted_rating_user_item - rating_array(trainele.user)(trainele.item)).abs
     }
     abosute_error / total_num
@@ -200,10 +389,10 @@ object Baseline extends App {
   var conf = new Conf(args) 
   println("Loading training data from: " + conf.train()) 
   val train = load(spark, conf.train(), conf.separator()).collect()
-  var train_data = new Data(train)
+  var train_data = new Train_Data(train)
   println("Loading test data from: " + conf.test()) 
   val test = load(spark, conf.test(), conf.separator()).collect()
-  val test_data = new Data(test)
+  val test_data = new Test_Data(test)
   def printToFile(content: String, 
                   location: String = "./answers.json") =
     Some(new java.io.PrintWriter(location)).foreach{
@@ -214,25 +403,25 @@ object Baseline extends App {
   train_data.data_preparation()
   test_data.data_preparation()
   val measurements_1 = (1 to conf.num_measurements()).map(x => timingInMs(() => {
-    test_data.mean_absolute_error_global()
+    test_data.mean_absolute_error_global(train_data)
   }))
   val output_1 = measurements_1.map(t => t._1)
   val timings_1 = measurements_1.map(t => t._2)
 
   val measurements_2 = (1 to conf.num_measurements()).map(x => timingInMs(() => {
-    test_data.mean_absolute_error_user()
+    test_data.mean_absolute_error_user(train_data)
   }))
   val output_2 = measurements_2.map(t => t._1)
   val timings_2 = measurements_2.map(t => t._2)
   
   val measurements_3 = (1 to conf.num_measurements()).map(x => timingInMs(() => {
-    test_data.mean_absolute_error_item()
+    test_data.mean_absolute_error_item(train_data)
   }))
   val output_3 = measurements_3.map(t => t._1)
   val timings_3 = measurements_3.map(t => t._2)
 
   val measurements_4 = (1 to conf.num_measurements()).map(x => timingInMs(() => {
-      test_data.mean_absolute_error()
+      test_data.mean_absolute_error(train_data)
   }))
   val output_4 = measurements_4.map(t => t._1)
   val timings_4 = measurements_4.map(t => t._2)
